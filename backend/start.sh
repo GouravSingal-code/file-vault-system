@@ -1,28 +1,31 @@
 #!/bin/sh
 set -e
+trap 'echo "Error at line $LINENO — exiting"; exit 1' ERR
 
 ENVIRONMENT=${DJANGO_ENVIRONMENT:-development}
 export DJANGO_SETTINGS_MODULE="core.settings.${ENVIRONMENT}"
 
 echo "Starting File Vault — environment: ${ENVIRONMENT}"
 
-# Ensure required directories exist
-mkdir -p media/uploads logs staticfiles
+# Ensure required directories exist with restricted permissions
+mkdir -p media/uploads staticfiles
+mkdir -p -m 700 logs
 
-# Apply migrations
+# Apply database migrations
 echo "Running migrations..."
 python manage.py migrate --noinput
 
-# Collect static files (required for WhiteNoise in production)
-python manage.py collectstatic --noinput --clear
+# Collect static files (already done at build time in production, harmless here)
+python manage.py collectstatic --noinput
 
 if [ "${ENVIRONMENT}" = "production" ]; then
-    echo "Starting Gunicorn..."
+    # Calculate optimal worker count: 2 × CPU cores + 1
+    WORKERS=${GUNICORN_WORKERS:-$(( 2 * $(nproc) + 1 ))}
+    echo "Starting Gunicorn with ${WORKERS} workers..."
     exec gunicorn core.wsgi:application \
         --bind 0.0.0.0:8000 \
-        --workers 4 \
+        --workers "${WORKERS}" \
         --worker-class sync \
-        --worker-connections 1000 \
         --timeout 60 \
         --keep-alive 5 \
         --max-requests 1000 \

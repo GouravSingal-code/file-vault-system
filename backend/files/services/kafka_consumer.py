@@ -39,7 +39,9 @@ class FileUploadConsumer:
             bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
             group_id=settings.KAFKA_CONSUMER_GROUP_ID,
             value_deserializer=lambda m: json.loads(m.decode('utf-8')),
-            auto_offset_reset='earliest',
+            # 'latest' = only process new messages on startup; avoids re-processing
+            # all historical uploads after a restart or new consumer group.
+            auto_offset_reset='latest',
             enable_auto_commit=False,      # manual commit for at-least-once semantics
             max_poll_records=10,
             session_timeout_ms=30000,
@@ -110,8 +112,15 @@ class FileUploadConsumer:
 
         try:
             # Decode file content from base64
+            import binascii
             file_content_b64 = data.get('file_content', '')
-            file_bytes = base64.b64decode(file_content_b64)
+            if not file_content_b64:
+                raise ValueError('file_content is missing or empty in Kafka message')
+            try:
+                file_bytes = base64.b64decode(file_content_b64)
+            except binascii.Error as exc:
+                raise ValueError(f'Invalid base64 file content: {exc}') from exc
+
             file_obj = io.BytesIO(file_bytes)
 
             filename = data.get('filename', 'unknown')
@@ -121,16 +130,16 @@ class FileUploadConsumer:
             # Compute hash
             file_hash = FileHashService.compute_hash_from_bytes(file_bytes)
 
-            # Deduplicate / store
-            # Pass file_obj only when no original exists yet to avoid redundant IO
-            needs_storage = not is_duplicate_pre_check(file_hash)
+            # Always pass file_obj into the atomic dedup service; it handles the
+            # "already exists" case inside the transaction to avoid the pre-check
+            # race condition (two concurrent uploads with the same hash).
             file_record, is_duplicate = DeduplicationService.get_or_create_file(
                 user_id=user_id,
                 filename=filename,
                 file_type=file_type,
                 file_size=file_size,
                 file_hash=file_hash,
-                file_obj=file_obj if needs_storage else None,
+                file_obj=file_obj,
             )
 
             # Update storage stats
@@ -169,7 +178,3 @@ class FileUploadConsumer:
             raise
 
 
-def is_duplicate_pre_check(file_hash: str) -> bool:
-    """Quick check before acquiring locks — avoids unnecessary IO."""
-    from ..models import File
-    return File.objects.filter(file_hash=file_hash, is_reference=False).exists()

@@ -13,16 +13,16 @@ import logging
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
-from django.utils import timezone
 
 logger = logging.getLogger('files')
 
-# Paths that don't require a UserId header
-_OPEN_PATHS = {'/health/', '/admin/', '/metrics/'}
+# Only /api/ paths require the UserId header
 _SUSPICIOUS_PATTERNS = re.compile(
-    r'(\.\./|\.\.\\|<script|javascript:|vbscript:|on\w+=)',
+    r'(\.\./|\.\.\\|<script|javascript:|vbscript:|data:|on\w+=|%00)',
     re.IGNORECASE,
 )
+# Alphanumeric + common safe separators only; rejects injection attempts
+_VALID_USER_ID = re.compile(r'^[\w@.\-]+$')
 
 
 class ApiValidationMiddleware:
@@ -48,6 +48,13 @@ class ApiValidationMiddleware:
             if len(user_id) > 255:
                 return JsonResponse(
                     {'error': 'UserId header is too long'},
+                    status=400,
+                    headers=self._cors_headers(),
+                )
+
+            if not _VALID_USER_ID.match(user_id):
+                return JsonResponse(
+                    {'error': 'UserId contains invalid characters'},
                     status=400,
                     headers=self._cors_headers(),
                 )
@@ -96,9 +103,10 @@ class RateLimitMiddleware:
         cache_key = f'rate_limit:{user_id}:{window_start}'
 
         try:
+            # Use add+incr pattern: add returns False if key exists (atomic on Redis)
             count = cache.get(cache_key, 0)
             if count >= self.REQUESTS_PER_WINDOW:
-                retry_after = self.WINDOW_SECONDS - (int(time.time()) % self.WINDOW_SECONDS)
+                retry_after = max(1, self.WINDOW_SECONDS - (int(time.time()) % self.WINDOW_SECONDS))
                 logger.warning(
                     'rate_limit_exceeded',
                     extra={'event': 'security', 'user_id': user_id, 'count': count},
@@ -108,10 +116,9 @@ class RateLimitMiddleware:
                     status=429,
                     headers={'Retry-After': str(retry_after)},
                 )
-            # Atomic increment with expiry
             cache.set(cache_key, count + 1, timeout=self.WINDOW_SECONDS * 2)
         except Exception as exc:
-            # If Redis is unavailable, degrade gracefully — don't block the request
+            # Redis unavailable — degrade gracefully, don't block legitimate traffic
             logger.warning('rate_limit_cache_error', extra={'error': str(exc)})
 
         return self.get_response(request)

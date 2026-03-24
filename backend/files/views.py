@@ -95,19 +95,8 @@ class FileViewSet(ApiViewMixin, viewsets.ModelViewSet):
         query_params = str(sorted(self.request.GET.items()))
         cache_key = f"user_files:{user_id}:{query_params}:v{file_count}"
         
-        # Try to get cached result first with compression
-        # Note: Skipping cache for now due to QuerySet serialization issues
-        # cached_result = CacheCompressionService.get_compressed_cache(cache_key)
-        cached_result = None
-        if cached_result:
-            log_performance_metric('cache_hit', {
-                'user_id': user_id,
-                'cache_key': cache_key,
-                'operation': 'file_list'
-            })
-            return cached_result
-        
-        # Cache miss - perform database query
+        # QuerySet objects can't be cached directly; cache the serialized results
+        # in the list() view instead of here.
         log_performance_metric('cache_miss', {
             'user_id': user_id,
             'cache_key': cache_key,
@@ -163,11 +152,6 @@ class FileViewSet(ApiViewMixin, viewsets.ModelViewSet):
                 queryset = queryset.filter(uploaded_at__lte=parsed_date)
         
         final_queryset = queryset.order_by('-uploaded_at')
-        
-        # Cache the result for 5 minutes with compression
-        # Note: We can't cache QuerySet objects directly, so we'll skip caching for now
-        # In production, you'd cache the serialized results instead
-        # CacheCompressionService.set_compressed_cache(cache_key, final_queryset, timeout=300)
         
         return final_queryset
 
@@ -683,11 +667,13 @@ class FileViewSet(ApiViewMixin, viewsets.ModelViewSet):
             }, status=status.HTTP_202_ACCEPTED)
             
         except Exception as e:
+            # file_obj may be unbound if the exception occurred before assignment
+            _file_obj = locals().get('file_obj')
             log_error(e, {
                 'user_id': user_id,
                 'operation': 'async_upload',
-                'filename': file_obj.name if file_obj else None,
-                'size': file_obj.size if file_obj else None
+                'filename': getattr(_file_obj, 'name', None),
+                'size': getattr(_file_obj, 'size', None),
             })
             return Response(
                 {'error': 'Upload failed'},

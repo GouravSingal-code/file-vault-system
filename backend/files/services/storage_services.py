@@ -57,13 +57,15 @@ class StatisticsService:
             reference_count=Count('id', filter=Q(is_reference=True)),
         )
 
-        total_storage_used = agg['total_size'] or 0
-        original_storage_used = agg['original_size'] or 0
-        # Physical savings: what would have been stored vs. what actually is
-        storage_savings = max(0, total_storage_used - original_storage_used)
+        # total_size = all file records (original + references)
+        # original_storage_used = physical bytes on disk (originals only)
+        # storage_savings = how many bytes were avoided via deduplication
+        total_logical = agg['total_size'] or 0          # what users think they own
+        original_storage_used = agg['original_size'] or 0  # actual bytes on disk
+        storage_savings = max(0, total_logical - original_storage_used)
         savings_percent = (
-            round((storage_savings / total_storage_used) * 100, 2)
-            if total_storage_used > 0
+            round((storage_savings / total_logical) * 100, 2)
+            if total_logical > 0
             else 0.0
         )
 

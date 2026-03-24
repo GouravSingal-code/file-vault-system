@@ -3,7 +3,8 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+# Development fallback — production.py overrides with a strict check
+SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-insecure-key-do-not-use-in-production')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -59,7 +60,7 @@ DATABASES = {
         'USER': os.environ.get('DB_USER', 'postgres'),
         'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
         'PORT': os.environ.get('DB_PORT', '5432'),
-        'CONN_MAX_AGE': 60,
+        'CONN_MAX_AGE': 600,  # 10 min persistent connections; use pgbouncer for higher concurrency
         'OPTIONS': {
             'connect_timeout': 10,
         },
@@ -75,7 +76,8 @@ CACHES = {
             'SOCKET_CONNECT_TIMEOUT': 5,
             'SOCKET_TIMEOUT': 5,
             'RETRY_ON_TIMEOUT': True,
-            'MAX_CONNECTIONS': 1000,
+            # 4 Gunicorn workers × ~10 concurrent DB ops = 40-50 max; leave headroom
+            'MAX_CONNECTIONS': 50,
         },
         'KEY_PREFIX': 'filevault',
     }
@@ -121,16 +123,12 @@ MAX_FILE_SIZE_MB = int(os.environ.get('MAX_FILE_SIZE_MB', 5))
 # Logging
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 LOGS_DIR = BASE_DIR / 'logs'
-LOGS_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True, mode=0o700)  # logs are private — no world-read
 
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'json': {
-            '()': 'django.utils.log.ServerFormatter',
-            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
-        },
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',

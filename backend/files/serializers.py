@@ -77,12 +77,6 @@ class UserStorageStatsSerializer(serializers.Serializer):
     smallest_file_size = serializers.IntegerField(required=False)
     last_updated = serializers.DateTimeField(required=False, read_only=True)
     
-    def get_storage_savings(self, obj):
-        """Calculate storage savings from original vs total storage."""
-        if isinstance(obj, dict):
-            return obj.get('original_storage_used', 0) - obj.get('total_storage_used', 0)
-        return obj.original_storage_used - obj.total_storage_used
-    
     def get_savings_percentage(self, obj):
         """Calculate savings percentage."""
         if isinstance(obj, dict):

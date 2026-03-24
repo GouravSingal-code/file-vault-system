@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.10.14-slim
 
 # Non-root user for least-privilege execution
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -25,10 +25,11 @@ RUN mkdir -p media/uploads staticfiles logs data && \
 
 USER appuser
 
-# Collect static files at build time
-RUN python manage.py collectstatic --noinput \
-    --settings core.settings.production \
-    || true   # tolerate DB-less builds
+# Collect static files at build time (DB not needed for static files)
+RUN DJANGO_SETTINGS_MODULE=core.settings.production \
+    SECRET_KEY=build-time-placeholder \
+    ALLOWED_HOSTS=localhost \
+    python manage.py collectstatic --noinput
 
 EXPOSE 8000
 

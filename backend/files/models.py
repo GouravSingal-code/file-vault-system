@@ -48,7 +48,7 @@ class File(models.Model):
 
 class UserStorageStats(models.Model):
     """Track storage usage statistics per user"""
-    user_id = models.CharField(max_length=255, primary_key=True, unique=True)
+    user_id = models.CharField(max_length=255, primary_key=True)
     total_storage_used = models.BigIntegerField(default=0, help_text='Actual storage used (bytes) after deduplication')
     original_storage_used = models.BigIntegerField(default=0, help_text='Storage that would be used without deduplication')
     file_count = models.IntegerField(default=0, help_text='Total number of files uploaded by user')
@@ -87,7 +87,6 @@ class UploadJob(models.Model):
         ('processing', 'Processing'),
         ('completed', 'Completed'),
         ('failed', 'Failed'),
-        ('duplicate', 'Duplicate Found'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -108,8 +107,6 @@ class UploadJob(models.Model):
     is_duplicate = models.BooleanField(default=False)
     duplicate_file_id = models.UUIDField(null=True, blank=True, help_text='ID of existing file if duplicate')
     
-    # Kafka tracking
-    kafka_message_id = models.CharField(max_length=255, blank=True, null=True)
     retry_count = models.IntegerField(default=0)
     
     class Meta:
